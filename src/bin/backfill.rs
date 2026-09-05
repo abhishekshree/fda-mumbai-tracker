@@ -16,12 +16,13 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    let gemini_key = std::env::var("GEMINI_API_KEY")?;
-    let model = std::env::var("GEMINI_MODEL")
-        .unwrap_or_else(|_| fda_mumbai_tracker::llm::DEFAULT_GEMINI_MODEL.into());
+    let (gemini_key, model) = fda_mumbai_tracker::load_config()?;
     let today = Utc::now().date_naive();
 
-    let (from_days_ago, to_days_ago) = parse_days(args.first(), args.get(1))?;
+    let (from_days_ago, to_days_ago) = parse_days(
+        args.first().map(String::as_str),
+        args.get(1).map(String::as_str),
+    )?;
 
     let pool = db::pool().await?;
     db::mark_stale_runs(pool).await?;
@@ -64,7 +65,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn parse_days(from_arg: Option<&String>, to_arg: Option<&String>) -> Result<(u32, u32)> {
+fn parse_days(from_arg: Option<&str>, to_arg: Option<&str>) -> Result<(u32, u32)> {
     let from = match from_arg {
         Some(a) => a.parse()?,
         None => BACKFILL_DAYS,
@@ -73,5 +74,29 @@ fn parse_days(from_arg: Option<&String>, to_arg: Option<&String>) -> Result<(u32
         Some(a) => a.parse()?,
         None => 1,
     };
+    if from < to {
+        anyhow::bail!("from_days_ago ({from}) must be >= to_days_ago ({to})");
+    }
     Ok((from, to))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_days, BACKFILL_DAYS};
+
+    #[test]
+    fn parse_days_rejects_non_numeric() {
+        assert!(parse_days(Some("abc"), None).is_err());
+    }
+
+    #[test]
+    fn parse_days_rejects_reversed_range() {
+        assert!(parse_days(Some("2"), Some("5")).is_err());
+    }
+
+    #[test]
+    fn parse_days_passes_valid_range_through() {
+        assert_eq!(parse_days(Some("5"), Some("2")).unwrap(), (5, 2));
+        assert_eq!(parse_days(None, None).unwrap(), (BACKFILL_DAYS, 1));
+    }
 }
