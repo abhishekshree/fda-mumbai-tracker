@@ -16,9 +16,7 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    let gemini_key = std::env::var("GEMINI_API_KEY")?;
-    let model = std::env::var("GEMINI_MODEL")
-        .unwrap_or_else(|_| fda_mumbai_tracker::llm::DEFAULT_GEMINI_MODEL.into());
+    let (gemini_key, model) = fda_mumbai_tracker::load_config()?;
     let today = Utc::now().date_naive();
 
     let (from_days_ago, to_days_ago) = parse_days(args.first(), args.get(1))?;
@@ -73,5 +71,30 @@ fn parse_days(from_arg: Option<&String>, to_arg: Option<&String>) -> Result<(u32
         Some(a) => a.parse()?,
         None => 1,
     };
+    if from < to {
+        anyhow::bail!("from_days_ago ({from}) must be >= to_days_ago ({to})");
+    }
     Ok((from, to))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_days;
+
+    #[test]
+    fn parse_days_rejects_invalid_and_reversed() {
+        assert!(
+            parse_days(Some(&"abc".to_string()), None).is_err(),
+            "non-numeric from bails"
+        );
+        assert!(
+            parse_days(Some(&"2".to_string()), Some(&"5".to_string())).is_err(),
+            "from < to bails"
+        );
+        assert_eq!(
+            parse_days(Some(&"5".to_string()), Some(&"2".to_string())).unwrap(),
+            (5, 2),
+            "valid range passes through"
+        );
+    }
 }

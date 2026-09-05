@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -51,16 +51,39 @@ pub const MAX_ITEMS: usize = 50;
 const FETCH_CONCURRENCY: usize = 8;
 const RSS_CONCURRENCY: usize = 8;
 
-pub fn google_news_url(query: &str, window: &str) -> String {
-    let q = if window.is_empty() {
-        query.to_string()
-    } else {
-        format!("{query} {window}")
+pub fn google_news_url(query: &str, window: Option<&str>) -> String {
+    let q = match window {
+        Some(w) if !w.is_empty() => format!("{query} {w}"),
+        _ => query.to_string(),
     };
     format!(
         "https://news.google.com/rss/search?q={0}&hl=en-IN&gl=IN&ceid=IN:en",
         encode(&q)
     )
+}
+
+async fn fan_out<T, Fut>(concurrency: usize, jobs: Vec<Fut>) -> Vec<T>
+where
+    Fut: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    let sem = Arc::new(Semaphore::new(concurrency));
+    let mut handles = Vec::with_capacity(jobs.len());
+    for job in jobs {
+        let sem = Arc::clone(&sem);
+        handles.push(tokio::spawn(async move {
+            let _permit = sem.acquire_owned().await.expect("semaphore closed");
+            job.await
+        }));
+    }
+    let mut out = Vec::with_capacity(handles.len());
+    for h in handles {
+        match h.await {
+            Ok(v) => out.push(v),
+            Err(e) => eprintln!("fan-out task failed: {e}"),
+        }
+    }
+    out
 }
 
 async fn fetch_feed(client: &reqwest::Client, url: &str) -> Result<Vec<NewsItem>> {
@@ -100,57 +123,56 @@ async fn fetch_feed(client: &reqwest::Client, url: &str) -> Result<Vec<NewsItem>
 }
 
 pub async fn fetch_items(client: &reqwest::Client, window: &str) -> Result<Vec<NewsItem>> {
-    let sem = Arc::new(Semaphore::new(RSS_CONCURRENCY));
-    let mut tasks = Vec::new();
-    for query in QUERIES {
-        let url = google_news_url(query, window);
-        let client = (*client).clone();
-        let sem = Arc::clone(&sem);
-        tasks.push(tokio::spawn(async move {
-            let _permit = sem.acquire_owned().await.expect("semaphore closed");
-            fetch_feed(&client, &url).await
-        }));
-    }
+    let jobs = QUERIES
+        .iter()
+        .map(|query| {
+            let url = google_news_url(query, (!window.is_empty()).then_some(window));
+            let client = (*client).clone();
+            async move { fetch_feed(&client, &url).await }
+        })
+        .collect();
     let mut items: Vec<NewsItem> = Vec::new();
-    for t in tasks {
-        match t.await {
-            Ok(Ok(found)) => items.extend(found),
-            Ok(Err(e)) => eprintln!("rss query failed: {e}"),
-            Err(e) => eprintln!("rss task failed: {e}"),
+    for res in fan_out(RSS_CONCURRENCY, jobs).await {
+        match res {
+            Ok(found) => items.extend(found),
+            Err(e) => eprintln!("rss query failed: {e}"),
         }
     }
     Ok(items)
 }
 
+static OG_TITLE_SEL: OnceLock<Selector> = OnceLock::new();
+static TITLE_SEL: OnceLock<Selector> = OnceLock::new();
+static H1_SEL: OnceLock<Selector> = OnceLock::new();
+static P_SEL: OnceLock<Selector> = OnceLock::new();
+
+fn first_text(html: &Html, sel: &Selector) -> Option<String> {
+    html.select(sel)
+        .next()
+        .map(|e| e.text().collect::<String>())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 fn extract_snippet(document: &str) -> Option<String> {
     let html = Html::parse_document(document);
-    let og_title = Selector::parse("meta[property='og:title']").ok()?;
-    let title_sel = Selector::parse("title").ok()?;
-    let h1_sel = Selector::parse("h1").ok()?;
-    let p_sel = Selector::parse("p").ok()?;
+    let og_title =
+        OG_TITLE_SEL.get_or_init(|| Selector::parse("meta[property='og:title']").expect("static"));
+    let title_sel = TITLE_SEL.get_or_init(|| Selector::parse("title").expect("static"));
+    let h1_sel = H1_SEL.get_or_init(|| Selector::parse("h1").expect("static"));
+    let p_sel = P_SEL.get_or_init(|| Selector::parse("p").expect("static"));
 
     let mut title = html
-        .select(&og_title)
+        .select(og_title)
         .next()
-        .and_then(|e| e.value().attr("content").map(|s| s.trim().to_string()))
+        .and_then(|e| e.value().attr("content"))
+        .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .or_else(|| {
-            html.select(&title_sel)
-                .next()
-                .map(|e| e.text().collect::<String>())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        })
-        .or_else(|| {
-            html.select(&h1_sel)
-                .next()
-                .map(|e| e.text().collect::<String>())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        });
+        .or_else(|| first_text(&html, title_sel))
+        .or_else(|| first_text(&html, h1_sel));
 
     let mut paras: Vec<String> = html
-        .select(&p_sel)
+        .select(p_sel)
         .filter_map(|e| {
             let t = e.text().collect::<String>();
             let t = t.trim();
@@ -182,7 +204,14 @@ fn extract_snippet(document: &str) -> Option<String> {
     Some(body)
 }
 
-async fn fetch_article(client: &reqwest::Client, url: &str) -> Result<(String, Option<String>)> {
+struct FetchedArticle {
+    final_url: String,
+    snippet: Option<String>,
+}
+
+struct EnrichResult(Result<FetchedArticle>);
+
+async fn fetch_article(client: &reqwest::Client, url: &str) -> Result<FetchedArticle> {
     let resp = client
         .get(url)
         .send()
@@ -192,45 +221,43 @@ async fn fetch_article(client: &reqwest::Client, url: &str) -> Result<(String, O
     let final_url = resp.url().to_string();
     let bytes = resp.bytes().await.context("article body")?;
     let text = String::from_utf8_lossy(&bytes);
-    Ok((final_url, extract_snippet(&text)))
+    Ok(FetchedArticle {
+        final_url,
+        snippet: extract_snippet(&text),
+    })
 }
 
-#[allow(clippy::type_complexity)]
+fn already_seen(urls: &HashSet<String>, seen: &HashSet<String>, url: &str) -> bool {
+    urls.contains(url) || seen.contains(url)
+}
+
 pub async fn enrich(
     client: &reqwest::Client,
     items: Vec<NewsItem>,
     seen: &HashSet<String>,
     max_items: usize,
 ) -> Vec<NewsItem> {
-    let sem = Arc::new(Semaphore::new(FETCH_CONCURRENCY));
-    let mut tasks = Vec::with_capacity(items.len());
-    for (i, item) in items.into_iter().enumerate() {
-        let sem = Arc::clone(&sem);
-        let client = (*client).clone();
-        let url = item.url.clone();
-        tasks.push(tokio::spawn(async move {
-            let _permit = sem.acquire_owned().await.expect("semaphore closed");
-            let res = fetch_article(&client, &url).await;
-            (i, item, res)
-        }));
-    }
-
-    let mut results: Vec<(usize, NewsItem, Result<(String, Option<String>)>)> =
-        Vec::with_capacity(tasks.len());
-    for t in tasks {
-        match t.await {
-            Ok(res) => results.push(res),
-            Err(e) => eprintln!("enrich task join error: {e}"),
-        }
-    }
+    let jobs = items
+        .into_iter()
+        .enumerate()
+        .map(|(i, item)| {
+            let client = (*client).clone();
+            let url = item.url.clone();
+            async move {
+                let res = fetch_article(&client, &url).await;
+                (i, item, EnrichResult(res))
+            }
+        })
+        .collect();
+    let mut results = fan_out(FETCH_CONCURRENCY, jobs).await;
     results.sort_by_key(|(i, _, _)| *i);
 
     let mut out: Vec<NewsItem> = Vec::with_capacity(results.len());
     let mut urls: HashSet<String> = HashSet::new();
-    for (_, mut item, res) in results {
+    for (_, mut item, EnrichResult(res)) in results {
         match res {
-            Ok((final_url, snippet)) => {
-                if urls.contains(&final_url) || seen.contains(&final_url) {
+            Ok(FetchedArticle { final_url, snippet }) => {
+                if already_seen(&urls, seen, &final_url) {
                     continue;
                 }
                 urls.insert(final_url.clone());
@@ -239,7 +266,7 @@ pub async fn enrich(
             }
             Err(e) => {
                 eprintln!("article fetch failed ({}): {e}", item.url);
-                if urls.contains(&item.url) || seen.contains(&item.url) {
+                if already_seen(&urls, seen, &item.url) {
                     continue;
                 }
                 urls.insert(item.url.clone());
@@ -257,4 +284,51 @@ pub async fn enrich(
     });
     out.truncate(max_items);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{already_seen, extract_snippet};
+    use std::collections::HashSet;
+
+    #[test]
+    fn extract_snippet_basic_empty_and_google_news_reject() {
+        let html = "<html><head><title>FDA seals eatery</title></head>            <body><p>FDA officials sealed the eatery after finding serious hygiene violations and expired stock.</p></body></html>";
+        let snippet = extract_snippet(html).expect("basic article yields a snippet");
+        assert!(
+            snippet.contains("FDA seals eatery"),
+            "title leads the snippet"
+        );
+
+        assert_eq!(
+            extract_snippet("<html><head></head><body></body></html>"),
+            None,
+            "empty page yields None"
+        );
+
+        let goog = "<html><head><title>Google News - FDA raid</title></head>            <body><p>Google News landing page for the FDA raid story with plenty of filler text here.</p></body></html>";
+        assert_eq!(
+            extract_snippet(goog),
+            None,
+            "google-news landing pages are rejected"
+        );
+    }
+
+    #[test]
+    fn already_seen_dedups_urls() {
+        let urls: HashSet<String> = ["https://a.test/1".to_string()].into_iter().collect();
+        let seen: HashSet<String> = ["https://seen.test/9".to_string()].into_iter().collect();
+        assert!(
+            already_seen(&urls, &seen, "https://a.test/1"),
+            "in-batch url is seen"
+        );
+        assert!(
+            already_seen(&urls, &seen, "https://seen.test/9"),
+            "db-seen url is seen"
+        );
+        assert!(
+            !already_seen(&urls, &seen, "https://fresh.test/2"),
+            "fresh url passes"
+        );
+    }
 }

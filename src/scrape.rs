@@ -130,23 +130,23 @@ pub fn build_rows(items: &[NewsItem], actions: &[LlmAction], delivery: bool) -> 
                 return None;
             }
             let item = items.get(a.source_index)?;
-            let establishment = nonempty(Some(a.establishment.clone()))?;
+            let establishment = nonempty(Some(a.establishment.as_str()))?;
             Some(ActionInsert {
                 establishment,
-                area: nonempty(a.area.clone()),
-                city: nonempty(a.city.clone()),
-                brand: nonempty(a.brand.clone()),
-                operator: nonempty(a.operator.clone()),
+                area: nonempty(a.area.as_deref()),
+                city: nonempty(a.city.as_deref()),
+                brand: nonempty(a.brand.as_deref()),
+                operator: nonempty(a.operator.as_deref()),
                 outlet_type: a.outlet_type.as_deref().map(canonical_outlet_type),
                 action_type: a.action_type.to_string(),
-                action_date: coerce_action_date(a.action_date.clone(), item.published),
+                action_date: coerce_action_date(a.action_date.as_deref(), item.published),
                 violations: a.violations.clone(),
                 compliance_score: a.compliance_score.filter(|s| (0..=100).contains(s)),
-                fssai_number: nonempty(a.fssai_number.clone()),
-                details: nonempty(a.details.clone()),
+                fssai_number: nonempty(a.fssai_number.as_deref()),
+                details: nonempty(a.details.as_deref()),
                 platforms: a.platforms.clone(),
                 source_url: item.url.clone(),
-                source_publisher: nonempty(item.source.clone()),
+                source_publisher: nonempty(item.source.as_deref()),
                 source_headline: Some(item.title.clone()),
                 published_at: item.published,
             })
@@ -181,16 +181,14 @@ mod tests {
             area: Some("Vile Parle West".into()),
             city: Some("Mumbai".into()),
             brand: Some("Domino's".into()),
-            operator: None,
             outlet_type: Some("restaurant".into()),
             action_type: ActionType::LicenceSuspension,
             action_date: Some("2026-08-11".into()),
             violations: vec!["pest control lapses".into()],
             compliance_score: Some(54),
-            fssai_number: None,
-            details: None,
             platforms: vec!["zomato".into()],
             source_index: 0,
+            ..Default::default()
         }];
         let rows = build_rows(&items, &actions, false);
         assert_eq!(rows.len(), 1);
@@ -205,19 +203,10 @@ mod tests {
         let items = vec![item("a", "b")];
         let action = LlmAction {
             establishment: "X".into(),
-            area: None,
-            city: None,
-            brand: None,
-            operator: None,
             outlet_type: Some("pavement stand".into()),
             action_type: ActionType::Inspection,
-            action_date: None,
-            violations: vec![],
-            compliance_score: None,
-            fssai_number: None,
-            details: None,
-            platforms: vec![],
             source_index: 0,
+            ..Default::default()
         };
         let rows = build_rows(&items, &[action], false);
         assert_eq!(rows.len(), 1);
@@ -229,44 +218,78 @@ mod tests {
         let items = vec![item("a", "b")];
         let action = LlmAction {
             establishment: "X".into(),
-            area: None,
-            city: None,
-            brand: None,
-            operator: None,
-            outlet_type: None,
             action_type: ActionType::Inspection,
-            action_date: None,
-            violations: vec![],
-            compliance_score: None,
-            fssai_number: None,
-            details: None,
-            platforms: vec![],
             source_index: 5,
+            ..Default::default()
         };
         assert!(build_rows(&items, &[action], false).is_empty());
     }
 
     #[test]
-    fn delivery_mode_drops_unlisted_outlets() {
+    fn delivery_drops_outlets_with_no_platforms() {
         let items = vec![item("a", "b")];
-        let mut action = LlmAction {
+        let action = LlmAction {
             establishment: "X".into(),
-            area: None,
             city: Some("Mumbai".into()),
-            brand: None,
-            operator: None,
             outlet_type: Some("restaurant".into()),
             action_type: ActionType::Inspection,
-            action_date: None,
-            violations: vec![],
-            compliance_score: None,
-            fssai_number: None,
-            details: None,
-            platforms: vec![],
             source_index: 0,
+            ..Default::default()
         };
-        assert!(build_rows(&items, &[action.clone()], true).is_empty());
-        action.platforms = vec!["zomato".into(), "swiggy".into()];
-        assert_eq!(build_rows(&items, &[action], true).len(), 1);
+        assert!(
+            build_rows(&items, &[action], true).is_empty(),
+            "delivery mode drops platform-less outlets"
+        );
+    }
+
+    #[test]
+    fn delivery_keeps_listed_outlets() {
+        let items = vec![item("a", "b")];
+        let action = LlmAction {
+            establishment: "X".into(),
+            city: Some("Mumbai".into()),
+            outlet_type: Some("restaurant".into()),
+            action_type: ActionType::Inspection,
+            platforms: vec!["zomato".into(), "swiggy".into()],
+            source_index: 0,
+            ..Default::default()
+        };
+        assert_eq!(
+            build_rows(&items, &[action], true).len(),
+            1,
+            "listed outlet survives delivery filter"
+        );
+    }
+
+    #[test]
+    fn compliance_score_out_of_range_becomes_none() {
+        let items = vec![item("a", "b")];
+        let scored = |score| LlmAction {
+            establishment: "X".into(),
+            action_type: ActionType::Inspection,
+            compliance_score: score,
+            source_index: 0,
+            ..Default::default()
+        };
+        assert_eq!(
+            build_rows(&items, &[scored(Some(54))], false)[0].compliance_score,
+            Some(54),
+            "in-range score passes through"
+        );
+        assert_eq!(
+            build_rows(&items, &[scored(Some(999))], false)[0].compliance_score,
+            None,
+            "999 becomes None"
+        );
+        assert_eq!(
+            build_rows(&items, &[scored(Some(-5))], false)[0].compliance_score,
+            None,
+            "negative score becomes None"
+        );
+        assert_eq!(
+            build_rows(&items, &[scored(Some(101))], false)[0].compliance_score,
+            None,
+            "above-100 score becomes None"
+        );
     }
 }
