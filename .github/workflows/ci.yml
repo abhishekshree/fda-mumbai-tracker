@@ -8,7 +8,6 @@ on:
 permissions:
   contents: read
   checks: write
-  issues: write
 
 jobs:
   check:
@@ -31,7 +30,3 @@ jobs:
         with:
           name: nextest-junit
           path: target/nextest/ci/junit.xml
-      - if: always()
-        uses: EnricoMi/publish-unit-test-result-action@v2
-        with:
-          files: target/nextest/ci/junit.xml

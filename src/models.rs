@@ -13,7 +13,7 @@ pub struct NewsItem {
     pub snippet: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionType {
     LicenceSuspension,
@@ -21,50 +21,56 @@ pub enum ActionType {
     ImprovementNotice,
     Sealing,
     Seizure,
+    #[default]
     Inspection,
     Reopened,
 }
 
 impl ActionType {
-    pub const ALL: [Self; 7] = [
-        Self::LicenceSuspension,
-        Self::StopBusiness,
-        Self::ImprovementNotice,
-        Self::Sealing,
-        Self::Seizure,
-        Self::Inspection,
-        Self::Reopened,
+    const TABLE: [(Self, &'static str); 7] = [
+        (Self::LicenceSuspension, "licence_suspension"),
+        (Self::StopBusiness, "stop_business"),
+        (Self::ImprovementNotice, "improvement_notice"),
+        (Self::Sealing, "sealing"),
+        (Self::Seizure, "seizure"),
+        (Self::Inspection, "inspection"),
+        (Self::Reopened, "reopened"),
     ];
+    pub const ALL: [Self; 7] = [
+        Self::TABLE[0].0,
+        Self::TABLE[1].0,
+        Self::TABLE[2].0,
+        Self::TABLE[3].0,
+        Self::TABLE[4].0,
+        Self::TABLE[5].0,
+        Self::TABLE[6].0,
+    ];
+
+    fn as_code(self) -> &'static str {
+        Self::TABLE
+            .iter()
+            .find(|(t, _)| *t == self)
+            .map(|(_, code)| *code)
+            .unwrap_or("unknown")
+    }
 }
 
 impl FromStr for ActionType {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim() {
-            "licence_suspension" => Ok(Self::LicenceSuspension),
-            "stop_business" => Ok(Self::StopBusiness),
-            "improvement_notice" => Ok(Self::ImprovementNotice),
-            "sealing" => Ok(Self::Sealing),
-            "seizure" => Ok(Self::Seizure),
-            "inspection" => Ok(Self::Inspection),
-            "reopened" => Ok(Self::Reopened),
-            _ => Err(format!("unknown action type: {s}")),
-        }
+        let s = s.trim();
+        Self::TABLE
+            .iter()
+            .find(|(_, code)| *code == s)
+            .map(|(t, _)| *t)
+            .ok_or_else(|| format!("unknown action type: {s}"))
     }
 }
 
 impl fmt::Display for ActionType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::LicenceSuspension => "licence_suspension",
-            Self::StopBusiness => "stop_business",
-            Self::ImprovementNotice => "improvement_notice",
-            Self::Sealing => "sealing",
-            Self::Seizure => "seizure",
-            Self::Inspection => "inspection",
-            Self::Reopened => "reopened",
-        })
+        f.write_str(self.as_code())
     }
 }
 
@@ -85,11 +91,9 @@ pub enum OutletType {
     Other,
 }
 
-impl FromStr for OutletType {
-    type Err = std::convert::Infallible;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s.trim() {
+impl From<&str> for OutletType {
+    fn from(s: &str) -> Self {
+        match s.trim() {
             "restaurant" => Self::Restaurant,
             "cloud_kitchen" => Self::CloudKitchen,
             "quick_commerce" => Self::QuickCommerce,
@@ -102,7 +106,7 @@ impl FromStr for OutletType {
             "dairy" => Self::Dairy,
             "street_vendor" => Self::StreetVendor,
             _ => Self::Other,
-        })
+        }
     }
 }
 
@@ -126,12 +130,10 @@ impl fmt::Display for OutletType {
 }
 
 pub fn canonical_outlet_type(s: &str) -> String {
-    OutletType::from_str(s)
-        .unwrap_or(OutletType::Other)
-        .to_string()
+    OutletType::from(s).to_string()
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmAction {
     pub establishment: String,
@@ -170,12 +172,32 @@ where
     Ok(Option::<Vec<String>>::deserialize(de)?.unwrap_or_default())
 }
 
-pub fn nonempty(v: Option<String>) -> Option<String> {
-    v.map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("null"))
+impl LlmAction {
+    /// Minimal record for the deterministic rule fallback: only what keyword
+    /// rules can know. Everything else stays empty for downstream defaults.
+    pub fn minimal(
+        establishment: String,
+        action_type: ActionType,
+        source_index: usize,
+        details: Option<String>,
+    ) -> Self {
+        Self {
+            establishment,
+            action_type,
+            source_index,
+            details,
+            ..Default::default()
+        }
+    }
 }
 
-pub fn coerce_action_date(raw: Option<String>, published: Option<DateTime<Utc>>) -> NaiveDate {
+pub fn nonempty(v: Option<&str>) -> Option<String> {
+    v.map(str::trim)
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("null"))
+        .map(str::to_string)
+}
+
+pub fn coerce_action_date(raw: Option<&str>, published: Option<DateTime<Utc>>) -> NaiveDate {
     if let Some(s) = raw.and_then(|s| NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok()) {
         return s;
     }
@@ -191,10 +213,13 @@ mod tests {
     #[test]
     fn action_type_round_trips() {
         for t in ActionType::ALL {
-            let parsed: ActionType = t.to_string().parse().unwrap();
-            assert_eq!(parsed, t);
+            let code = t.to_string();
+            assert_eq!(code.parse::<ActionType>().unwrap(), t, "{code} round-trips");
         }
-        assert!("suspended".parse::<ActionType>().is_err());
+        assert!(
+            "suspended".parse::<ActionType>().is_err(),
+            "unknown code is rejected"
+        );
     }
 
     #[test]
@@ -207,13 +232,14 @@ mod tests {
     #[test]
     fn date_trusts_reported_value() {
         assert_eq!(
-            coerce_action_date(Some("2026-08-11".into()), None),
+            coerce_action_date(Some("2026-08-11"), None),
             NaiveDate::from_ymd_opt(2026, 8, 11).unwrap()
         );
-        assert_eq!(coerce_action_date(None, None), Utc::now().date_naive());
+        let now = Utc::now();
+        assert_eq!(coerce_action_date(None, Some(now)), now.date_naive());
         assert_eq!(
-            coerce_action_date(Some("not a date".into()), Some(Utc::now())),
-            Utc::now().date_naive()
+            coerce_action_date(Some("not a date"), Some(now)),
+            now.date_naive()
         );
     }
 }
