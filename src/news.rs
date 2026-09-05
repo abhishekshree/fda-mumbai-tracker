@@ -292,26 +292,27 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn extract_snippet_basic_empty_and_google_news_reject() {
+    fn extract_snippet_leads_with_title_then_paragraphs() {
         let html = "<html><head><title>FDA seals eatery</title></head>            <body><p>FDA officials sealed the eatery after finding serious hygiene violations and expired stock.</p></body></html>";
         let snippet = extract_snippet(html).expect("basic article yields a snippet");
         assert!(
             snippet.contains("FDA seals eatery"),
             "title leads the snippet"
         );
+    }
 
+    #[test]
+    fn extract_snippet_returns_none_for_empty_page() {
         assert_eq!(
             extract_snippet("<html><head></head><body></body></html>"),
-            None,
-            "empty page yields None"
+            None
         );
+    }
 
-        let goog = "<html><head><title>Google News - FDA raid</title></head>            <body><p>Google News landing page for the FDA raid story with plenty of filler text here.</p></body></html>";
-        assert_eq!(
-            extract_snippet(goog),
-            None,
-            "google-news landing pages are rejected"
-        );
+    #[test]
+    fn extract_snippet_rejects_google_news_landing_pages() {
+        let html = "<html><head><title>Google News - FDA raid</title></head>            <body><p>Google News landing page for the FDA raid story with plenty of filler text here.</p></body></html>";
+        assert_eq!(extract_snippet(html), None);
     }
 
     #[test]

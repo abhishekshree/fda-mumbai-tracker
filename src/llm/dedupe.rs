@@ -140,7 +140,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_group_response_shapes() {
+    fn parse_groups_accepts_valid_and_fenced_bodies() {
         assert_eq!(
             parse_groups(r#"{"groups": [["N0","N2"], ["K1","N5"]]}"#).unwrap(),
             vec![
@@ -152,23 +152,32 @@ mod tests {
             parse_groups("```json\n{\"groups\": []}\n```").unwrap(),
             Vec::<Vec<String>>::new()
         );
+    }
+
+    #[test]
+    fn parse_groups_rejects_nonconforming_bodies() {
         assert!(parse_groups("no json").is_err());
         assert!(parse_groups(r#"{"actions": []}"#).is_err());
     }
 
     #[test]
-    fn drops_rereports_keeps_one_per_event() {
-        // pure new-vs-new group: keep lowest index
+    fn drops_new_ids_but_keeps_lowest_per_event() {
         assert_eq!(
             drops_from_groups(&[vec!["N3".into(), "N1".into(), "N7".into()]], 10),
             vec![3, 7]
         );
-        // group touching a known row: every new id is a re-report
+    }
+
+    #[test]
+    fn drops_every_new_id_touching_a_known_row() {
         assert_eq!(
             drops_from_groups(&[vec!["K4".into(), "N2".into()]], 10),
             vec![2]
         );
-        // junk ids and out-of-range indices are ignored
+    }
+
+    #[test]
+    fn ignores_junk_and_out_of_range_ids() {
         assert!(drops_from_groups(&[vec!["N9".into(), "bogus".into()]], 3).is_empty());
         assert!(drops_from_groups(&[], 3).is_empty());
     }

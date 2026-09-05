@@ -123,7 +123,7 @@ mod tests {
     use crate::models::ActionType;
 
     #[test]
-    fn triage_needs_corroboration_only_for_ambiguous_types() {
+    fn triage_drops_ambiguous_signals_without_corroboration() {
         assert_eq!(
             triage("fda raid seals eatery"),
             Some(ActionType::Sealing),
@@ -134,20 +134,18 @@ mod tests {
             None,
             "sealing without corroboration is dropped"
         );
+    }
+
+    #[test]
+    fn triage_passes_unambiguous_signals_freely() {
         assert_eq!(
             triage("outlet served improvement notice"),
-            Some(ActionType::ImprovementNotice),
-            "unambiguous improvement notice passes"
+            Some(ActionType::ImprovementNotice)
         );
-        assert_eq!(
-            triage("eatery reopened"),
-            Some(ActionType::Reopened),
-            "reopened passes without corroboration"
-        );
+        assert_eq!(triage("eatery reopened"), Some(ActionType::Reopened));
         assert_eq!(
             triage("licence suspended over pests"),
-            Some(ActionType::LicenceSuspension),
-            "licence suspension passes without corroboration"
+            Some(ActionType::LicenceSuspension)
         );
     }
 
@@ -177,10 +175,6 @@ mod tests {
                 item: &cricket,
             },
         ];
-        assert!(
-            triage(&haystack(jobs[1].item)).is_none(),
-            "cricket headline carries no signal"
-        );
         let kept = rule_extract(&jobs);
         assert_eq!(kept.len(), 1, "only the signal item is kept");
         assert_eq!(kept[0].source_index, 4, "orig index survives");

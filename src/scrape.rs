@@ -226,7 +226,7 @@ mod tests {
     }
 
     #[test]
-    fn delivery_drops_outlets_with_no_platforms() {
+    fn delivery_requires_platform_listing() {
         let items = vec![item("a", "b")];
         let action = LlmAction {
             establishment: "X".into(),
@@ -261,35 +261,34 @@ mod tests {
         );
     }
 
-    #[test]
-    fn compliance_score_out_of_range_becomes_none() {
-        let items = vec![item("a", "b")];
-        let scored = |score| LlmAction {
+    fn scored(score: Option<i32>) -> LlmAction {
+        LlmAction {
             establishment: "X".into(),
             action_type: ActionType::Inspection,
             compliance_score: score,
             source_index: 0,
             ..Default::default()
-        };
+        }
+    }
+
+    #[test]
+    fn compliance_score_in_range_passes_through() {
+        let items = vec![item("a", "b")];
         assert_eq!(
             build_rows(&items, &[scored(Some(54))], false)[0].compliance_score,
-            Some(54),
-            "in-range score passes through"
+            Some(54)
         );
-        assert_eq!(
-            build_rows(&items, &[scored(Some(999))], false)[0].compliance_score,
-            None,
-            "999 becomes None"
-        );
-        assert_eq!(
-            build_rows(&items, &[scored(Some(-5))], false)[0].compliance_score,
-            None,
-            "negative score becomes None"
-        );
-        assert_eq!(
-            build_rows(&items, &[scored(Some(101))], false)[0].compliance_score,
-            None,
-            "above-100 score becomes None"
-        );
+    }
+
+    #[test]
+    fn compliance_score_out_of_range_becomes_none() {
+        let items = vec![item("a", "b")];
+        for score in [Some(999), Some(-5), Some(101), None] {
+            assert_eq!(
+                build_rows(&items, &[scored(score)], false)[0].compliance_score,
+                None,
+                "{score:?} becomes None"
+            );
+        }
     }
 }

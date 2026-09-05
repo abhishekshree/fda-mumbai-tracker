@@ -19,7 +19,10 @@ async fn main() -> Result<()> {
     let (gemini_key, model) = fda_mumbai_tracker::load_config()?;
     let today = Utc::now().date_naive();
 
-    let (from_days_ago, to_days_ago) = parse_days(args.first(), args.get(1))?;
+    let (from_days_ago, to_days_ago) = parse_days(
+        args.first().map(String::as_str),
+        args.get(1).map(String::as_str),
+    )?;
 
     let pool = db::pool().await?;
     db::mark_stale_runs(pool).await?;
@@ -62,7 +65,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn parse_days(from_arg: Option<&String>, to_arg: Option<&String>) -> Result<(u32, u32)> {
+fn parse_days(from_arg: Option<&str>, to_arg: Option<&str>) -> Result<(u32, u32)> {
     let from = match from_arg {
         Some(a) => a.parse()?,
         None => BACKFILL_DAYS,
@@ -79,22 +82,21 @@ fn parse_days(from_arg: Option<&String>, to_arg: Option<&String>) -> Result<(u32
 
 #[cfg(test)]
 mod tests {
-    use super::parse_days;
+    use super::{parse_days, BACKFILL_DAYS};
 
     #[test]
-    fn parse_days_rejects_invalid_and_reversed() {
-        assert!(
-            parse_days(Some(&"abc".to_string()), None).is_err(),
-            "non-numeric from bails"
-        );
-        assert!(
-            parse_days(Some(&"2".to_string()), Some(&"5".to_string())).is_err(),
-            "from < to bails"
-        );
-        assert_eq!(
-            parse_days(Some(&"5".to_string()), Some(&"2".to_string())).unwrap(),
-            (5, 2),
-            "valid range passes through"
-        );
+    fn parse_days_rejects_non_numeric() {
+        assert!(parse_days(Some("abc"), None).is_err());
+    }
+
+    #[test]
+    fn parse_days_rejects_reversed_range() {
+        assert!(parse_days(Some("2"), Some("5")).is_err());
+    }
+
+    #[test]
+    fn parse_days_passes_valid_range_through() {
+        assert_eq!(parse_days(Some("5"), Some("2")).unwrap(), (5, 2));
+        assert_eq!(parse_days(None, None).unwrap(), (BACKFILL_DAYS, 1));
     }
 }

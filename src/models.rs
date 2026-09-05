@@ -212,41 +212,10 @@ mod tests {
 
     #[test]
     fn action_type_round_trips() {
-        assert_eq!(
-            "licence_suspension".parse::<ActionType>().unwrap(),
-            ActionType::LicenceSuspension,
-            "licence_suspension round-trips"
-        );
-        assert_eq!(
-            "stop_business".parse::<ActionType>().unwrap(),
-            ActionType::StopBusiness,
-            "stop_business round-trips"
-        );
-        assert_eq!(
-            "improvement_notice".parse::<ActionType>().unwrap(),
-            ActionType::ImprovementNotice,
-            "improvement_notice round-trips"
-        );
-        assert_eq!(
-            "sealing".parse::<ActionType>().unwrap(),
-            ActionType::Sealing,
-            "sealing round-trips"
-        );
-        assert_eq!(
-            "seizure".parse::<ActionType>().unwrap(),
-            ActionType::Seizure,
-            "seizure round-trips"
-        );
-        assert_eq!(
-            "inspection".parse::<ActionType>().unwrap(),
-            ActionType::Inspection,
-            "inspection round-trips"
-        );
-        assert_eq!(
-            "reopened".parse::<ActionType>().unwrap(),
-            ActionType::Reopened,
-            "reopened round-trips"
-        );
+        for t in ActionType::ALL {
+            let code = t.to_string();
+            assert_eq!(code.parse::<ActionType>().unwrap(), t, "{code} round-trips");
+        }
         assert!(
             "suspended".parse::<ActionType>().is_err(),
             "unknown code is rejected"
@@ -266,10 +235,11 @@ mod tests {
             coerce_action_date(Some("2026-08-11"), None),
             NaiveDate::from_ymd_opt(2026, 8, 11).unwrap()
         );
-        assert_eq!(coerce_action_date(None, None), Utc::now().date_naive());
+        let now = Utc::now();
+        assert_eq!(coerce_action_date(None, Some(now)), now.date_naive());
         assert_eq!(
-            coerce_action_date(Some("not a date"), Some(Utc::now())),
-            Utc::now().date_naive()
+            coerce_action_date(Some("not a date"), Some(now)),
+            now.date_naive()
         );
     }
 }

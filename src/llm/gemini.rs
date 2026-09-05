@@ -274,6 +274,15 @@ mod tests {
     use crate::models::ActionType;
     use serde_json::json;
 
+    fn gemini_text(inner: &str) -> String {
+        let body = json!({
+            "candidates": [{
+                "content": {"parts": [{"text": inner}]}
+            }]
+        });
+        response_text(&body)
+    }
+
     #[test]
     fn strips_fences() {
         assert_eq!(strip_code_fences("```json\n[1,2]\n```"), "[1,2]");
@@ -282,12 +291,8 @@ mod tests {
 
     #[test]
     fn parses_minimal_action() {
-        let body = json!({
-            "candidates": [{
-                "content": {"parts": [{"text": "[{\"establishment\":\"Domino's\",\"actionType\":\"licence_suspension\",\"sourceIndex\":0}]"}]}
-            }]
-        });
-        let actions = parse_llm_text(&response_text(&body)).unwrap();
+        let text = gemini_text("[{\"establishment\":\"Domino's\",\"actionType\":\"licence_suspension\",\"sourceIndex\":0}]");
+        let actions = parse_llm_text(&text).unwrap();
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].establishment, "Domino's");
         assert_eq!(actions[0].action_type, ActionType::LicenceSuspension);
@@ -295,24 +300,18 @@ mod tests {
 
     #[test]
     fn accepts_snake_case_keys() {
-        let body = json!({
-            "candidates": [{
-                "content": {"parts": [{"text": "[{\"establishment\":\"X\",\"action_type\":\"inspection\",\"source_index\":0}]"}]}
-            }]
-        });
-        let actions = parse_llm_text(&response_text(&body)).unwrap();
+        let text = gemini_text(
+            "[{\"establishment\":\"X\",\"action_type\":\"inspection\",\"source_index\":0}]",
+        );
+        let actions = parse_llm_text(&text).unwrap();
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].action_type, ActionType::Inspection);
     }
 
     #[test]
     fn tolerates_null_arrays() {
-        let body = json!({
-            "candidates": [{
-                "content": {"parts": [{"text": "[{\"establishment\":\"X\",\"actionType\":\"sealing\",\"violations\":null,\"platforms\":null,\"source_index\":0}]"}]}
-            }]
-        });
-        let actions = parse_llm_text(&response_text(&body)).unwrap();
+        let text = gemini_text("[{\"establishment\":\"X\",\"actionType\":\"sealing\",\"violations\":null,\"platforms\":null,\"source_index\":0}]");
+        let actions = parse_llm_text(&text).unwrap();
         assert_eq!(actions.len(), 1);
         assert!(actions[0].violations.is_empty());
         assert!(actions[0].platforms.is_empty());
@@ -320,12 +319,9 @@ mod tests {
 
     #[test]
     fn drops_unknown_action_type() {
-        let body = json!({
-            "candidates": [{
-                "content": {"parts": [{"text": "[{\"establishment\":\"X\",\"actionType\":\"bogus\",\"sourceIndex\":0}]"}]}
-            }]
-        });
-        assert_eq!(parse_llm_text(&response_text(&body)).unwrap().len(), 0);
+        let text =
+            gemini_text("[{\"establishment\":\"X\",\"actionType\":\"bogus\",\"sourceIndex\":0}]");
+        assert_eq!(parse_llm_text(&text).unwrap().len(), 0);
     }
 
     #[test]
@@ -339,15 +335,13 @@ mod tests {
 
     #[test]
     fn retry_delay_backs_off_and_caps() {
-        assert_eq!(retry_delay(0, None).as_secs(), 15, "first backoff is 15s");
-        assert_eq!(retry_delay(1, None).as_secs(), 30, "second backoff is 30s");
-        assert_eq!(retry_delay(2, None).as_secs(), 60, "third backoff is 60s");
-        assert_eq!(retry_delay(3, None).as_secs(), 120, "backoff caps at 120s");
-        assert_eq!(
-            retry_delay(5, None).as_secs(),
-            120,
-            "cap holds past attempt 4"
-        );
+        for (attempt, secs) in [(0, 15), (1, 30), (2, 60), (3, 120), (5, 120)] {
+            assert_eq!(
+                retry_delay(attempt, None).as_secs(),
+                secs,
+                "attempt {attempt} backs off to {secs}s"
+            );
+        }
         assert_eq!(
             retry_delay(0, Some(5)).as_secs(),
             5,

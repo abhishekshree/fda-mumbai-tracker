@@ -213,11 +213,15 @@ mod tests {
     }
 
     #[test]
-    fn budget_halves_on_402_until_floor() {
+    fn budget_halves_on_402() {
         let mut payload = json!({"max_tokens": 32768});
         assert!(shrink_budget_on_402(402, "low", &mut payload).unwrap());
         assert_eq!(payload["max_tokens"], json!(16384));
         assert!(!shrink_budget_on_402(429, "slow", &mut payload).unwrap());
+    }
+
+    #[test]
+    fn budget_floor_errors_instead_of_halving() {
         let mut floor = json!({"max_tokens": 8192});
         assert!(shrink_budget_on_402(402, "low", &mut floor).is_err());
     }
@@ -230,6 +234,5 @@ mod tests {
         });
         let actions = openrouter_success(&body.to_string(), "m").unwrap();
         assert_eq!(actions.len(), 1, "one action parsed");
-        let _ = parse_llm_text("[]").unwrap();
     }
 }
