@@ -19,11 +19,11 @@ pub(crate) fn system_prompt(delivery: bool) -> Cow<'static, str> {
 }
 
 pub(crate) const BATCH_SIZE: usize = 20;
-// ponytail: free-tier quota is 5 RPM / 20 RPD — concurrent batches re-hit
-// 429s in lockstep, so batches run single-file with no spawn/semaphore.
+// ponytail: Gemini free tier allows ~5 requests/min — concurrent batches
+// hit 429s together, so batches run sequentially with backoff, no semaphore.
 
-/// Floating alias: always tracks the newest Flash. Deliberate — pinned
-/// 3.5-flash underperformed, so we ride latest instead of a version.
+/// Latest Flash alias, not a pinned version: pinned 3.5-flash extracted
+/// worse, so we track latest until a pinned version beats it.
 pub const DEFAULT_GEMINI_MODEL: &str = "gemini-flash-latest";
 
 mod dedupe;
