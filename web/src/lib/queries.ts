@@ -112,7 +112,7 @@ export const listActions = unstable_cache(
       actions: rows.map(normalizeAction),
     };
   },
-  ["list-actions"],
+  ["list-actions", "v2"],
   DAILY,
 );
 
@@ -136,7 +136,7 @@ export const listBrands = unstable_cache(
     )) as Array<Record<string, unknown>>;
     return rows.map((r) => String(r.brand));
   },
-  ["list-brands"],
+  ["list-brands", "v2"],
   DAILY,
 );
 
@@ -147,7 +147,7 @@ export const listCities = unstable_cache(
     )) as Array<Record<string, unknown>>;
     return rows.map((r) => String(r.city));
   },
-  ["list-cities"],
+  ["list-cities", "v2"],
   DAILY,
 );
 
@@ -186,6 +186,6 @@ export const getStats = unstable_cache(
       byCity,
     };
   },
-  ["get-stats"],
+  ["get-stats", "v2"],
   DAILY,
 );
