@@ -56,7 +56,20 @@ const RULES: &[Rule] = &[
         action: ActionType::Reopened,
     },
     Rule {
-        needs: &[&["raid"], &["inspect"], &["fda"]],
+        // Inspection needs an enforcement verb AND fda context: bare "fda"
+        // alone passes quality-test reports, plan announcements and
+        // awaiting-reply stories (6 Sept 2026 junk) that name no outlet
+        // facing action.
+        needs: &[
+            &["raid", "fda"],
+            &["raid", "food", "safety"],
+            &["raid", "licence"],
+            &["raid", "license"],
+            &["inspect", "fda"],
+            &["inspect", "food", "safety"],
+            &["inspect", "licence"],
+            &["inspect", "license"],
+        ],
         action: ActionType::Inspection,
     },
 ];
@@ -133,6 +146,35 @@ mod tests {
             triage("shop sealed after fire"),
             None,
             "sealing without corroboration is dropped"
+        );
+    }
+
+    #[test]
+    fn triage_drops_fda_only_stories() {
+        // 6 Sept 2026 junk: bare FDA mentions with no raid/inspection action.
+        assert_eq!(
+            triage("popular re 1 ayurvedic digestive tablet fails maharashtra fda quality test"),
+            None,
+        );
+        assert_eq!(
+            triage("maharashtra fda rolls out year-round food safety plan for festivals"),
+            None,
+        );
+        assert_eq!(
+            triage("fda awaiting response from restaurants at mumbai cricket association premises"),
+            None,
+        );
+        assert_eq!(
+            triage("maharashtra fda awaits replies from five mca restaurants over licensing violations"),
+            None,
+        );
+        assert_eq!(
+            triage("fda raid at hotel cites hygiene violations"),
+            Some(ActionType::Inspection),
+        );
+        assert_eq!(
+            triage("food safety inspectors raid eatery"),
+            Some(ActionType::Inspection),
         );
     }
 

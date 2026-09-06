@@ -29,6 +29,7 @@ pub const DEFAULT_GEMINI_MODEL: &str = "gemini-flash-latest";
 mod dedupe;
 mod gemini;
 mod openrouter;
+mod quality;
 mod triage;
 
 pub async fn extract(
@@ -100,7 +101,16 @@ pub async fn extract(
     let mut seen = HashSet::new();
     actions = actions
         .into_iter()
-        .filter(|a| !a.establishment.trim().is_empty())
+        .filter(|a| match quality::check(a) {
+            Ok(()) => true,
+            Err(reason) => {
+                eprintln!(
+                    "dropping low-quality LLM record ({reason}): {}",
+                    truncate(&a.establishment, 80)
+                );
+                false
+            }
+        })
         .filter(|a| {
             seen.insert((
                 a.source_index,

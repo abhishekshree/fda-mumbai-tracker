@@ -31,4 +31,11 @@ Field rules:
 - details: one sentence of crucial context — typically the reason for the action and the outcome (e.g. "licence suspended over cockroach infestation found during inspection"). Omit when nothing is known.
 - sourceIndex: the index of the source item this record came from (required).
 
+Skip the item entirely when any of these hold:
+- No concrete action yet: "awaits replies", "awaiting response", "seeks explanation", or a notice issued to unnamed outlets with replies still pending.
+- Interviews, quotes, or profiles (e.g. an official discussing past drives) with no action against a named outlet.
+- Announcements of future plans, drives, or year-round programmes naming no outlet facing action now.
+- Drug/pharma product quality failures (tablets, syrups, manufacturers) — only retail food outlets count.
+- The establishment would be a quote, sentence, product, person, or plan name rather than a named food outlet.
+
 Return a JSON array only. If an item reports no concrete action against a named retail food outlet, skip it entirely. Optional fields may be null.
